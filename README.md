@@ -6,36 +6,39 @@ L'objectif du TP est de découvrir et d'apprendre à utiliser Docker, tout en é
 1. [Hello world](#1-hello-world)
 2. [Lancer une image existante](#2-lancer-une-image-existante)
 3. [Écrire un Dockerfile](#3-écrire-un-dockerfile)
-4. [Entrer dans un conteneur](#4-entrer-dans-un-conteneur)
-5. [Docker Compose](#5-docker-compose)
-6. [Bonus : reverse proxy avec Traefik](#6-bonus--reverse-proxy-avec-traefik)
-7. [Nettoyage](#7-nettoyage)
+4. [Docker Compose](#4-docker-compose)
+5. [Bonus : réparer un compose cassé](#5-bonus--réparer-un-compose-cassé)
+6. [Nettoyage](#6-nettoyage)
 
-Une [antisèche](#antisèche) et une liste des [erreurs fréquentes](#erreurs-fréquentes) sont en fin de document.
+Une [antisèche](#antisèche) et une liste des [erreurs fréquentes](#erreurs-fréquentes) sont en fin de document. Les réponses aux questions sont dans [`SOLUTIONS.md`](SOLUTIONS.md) : ne l'ouvrez qu'après avoir cherché.
+
+Les questions en *italique* n'attendent pas une commande mais une explication. Prenez le temps d'être certain de comprendre ce qui se passe avant de passer à la suite : c'est là que se trouve l'essentiel du TP.
+
+À tout moment, `docker ps` liste les conteneurs qui tournent et `docker stop NAME` en arrête un.
 
 
 ## 0. Connexion et prérequis
 
-La première étape est d'installer docker dans votre VM. Pour cela vous pouvez lancer :
+La première étape est d'installer Docker sur votre VM :
+
 ```bash
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker $USER
 ```
 
-Les services délivrant un service http tourneront sur la VM. Pour ouvrir les pages web dans le navigateur de votre ordinateur, on ouvre un tunnels SSH : `-L 8080:localhost:8080` signifie que le port 8080 de votre ordinateur est redirigé vers le port 8080 de la VM.
+Déconnectez-vous puis reconnectez-vous pour que l'ajout au groupe `docker` soit pris en compte.
+
+Les services web tourneront sur la VM, mais vous voudrez les ouvrir dans le navigateur de votre ordinateur. Pour cela, on ouvre un tunnel SSH : `-L 8080:localhost:8080` redirige le port 8080 de votre ordinateur vers le port 8080 de la VM (`-L` pour *local forwarding*).
 
 Depuis le terminal de votre ordinateur :
 
 ```bash
-ssh -L 8080:localhost:8080 -L 3001:localhost:3001 -L 8081:localhost:8081 \
-    -L 8000:localhost:8000 -L 8090:localhost:8090 \
-    -L 8880:localhost:80   -L 8088:localhost:8088 \
-    <user>@<adresse_de_la_vm>
+ssh -L 8080:localhost:8080 <user>@<adresse_de_la_vm>
 ```
 
-Cette commande couvre tous les ports du TP. Dans la suite, les adresses `http://localhost:...` sont à ouvrir dans votre navigateur.
+Ce tunnel suffit pour les étapes 1 à 3. Les adresses `http://localhost:...` sont à ouvrir dans le navigateur de votre ordinateur.
 
-Une fois connecté, vous pouver récupérer le tp sur votre VM :
+Une fois connecté, récupérez le TP sur la VM :
 
 ```bash
 git clone <URL_DU_REPO> tp-docker
@@ -43,9 +46,9 @@ cd tp-docker
 docker version
 ```
 
-La sortie doit contenir deux parties, `Client` et `Server`. Le client est la commande `docker` que vous tapez ; le serveur (le démon `dockerd`) télécharge les images et lance les conteneurs.
+La sortie contient deux parties, `Client` et `Server`. Le client est la commande `docker` que vous tapez ; le serveur (le démon `dockerd`) télécharge les images et lance les conteneurs.
 
-Si vous obtenez `permission denied ... docker.sock`, votre utilisateur n'est pas dans le groupe `docker` : `sudo usermod -aG docker $USER`, puis déconnectez-vous et reconnectez-vous.
+*Le client et le serveur sont deux programmes distincts. Qu'est-ce que cela permet, à votre avis ?*
 
 
 ## 1. Hello world
@@ -56,15 +59,9 @@ docker run hello-world
 
 Docker cherche l'image `hello-world` en local. Comme elle n'y est pas, il la télécharge depuis le Docker Hub, crée un conteneur à partir de cette image et le lance. Le programme affiche un message puis se termine, et le conteneur s'arrête avec lui.
 
-```bash
-docker images     # l'image est maintenant présente en local
-docker ps         # conteneurs en cours d'exécution : aucun
-docker ps -a      # tous les conteneurs : hello-world apparaît avec le statut Exited
-```
+Regardez maintenant ce qu'il reste sur la machine avec `docker images`, `docker ps` et `docker ps -a`. Relancez `docker run hello-world`, puis regardez à nouveau.
 
-Une **image** est un modèle en lecture seule. Un **conteneur** est une instance créée à partir de ce modèle.
-
-Relancez `docker run hello-world` : l'image n'est pas retéléchargée, mais un second conteneur apparaît dans `docker ps -a`.
+*Combien d'images avez-vous ? Combien de conteneurs ? Qu'en déduisez-vous sur la différence entre une image et un conteneur ?*
 
 ### Un shell dans un autre Linux
 
@@ -72,21 +69,16 @@ Relancez `docker run hello-world` : l'image n'est pas retéléchargée, mais un 
 docker run -it --rm alpine sh
 ```
 
-`-it` ouvre une session interactive, `--rm` supprime le conteneur à la sortie. Dans le conteneur :
+`-it` ouvre une session interactive, `--rm` supprime le conteneur à la sortie. Vous êtes maintenant dans le conteneur. Comparez ce que renvoient `cat /etc/os-release`, `uname -r` et `ps aux` dans le conteneur et sur la VM.
 
-```sh
-cat /etc/os-release   # Alpine Linux
-uname -r              # version du noyau
-ps aux                # un seul processus : votre shell
-exit
-```
+*Le conteneur tourne sous Alpine, mais quel noyau utilise-t-il ? Pourquoi ne voit-il qu'un seul processus ?*
 
-Lancez `uname -r` sur la VM : la version est la même. Un conteneur n'est pas une machine virtuelle. Il utilise le noyau de la machine hôte et dispose seulement de ses propres fichiers et de ses propres processus, ce qui explique qu'il démarre presque instantanément.
+*En vous appuyant sur ces observations : pourquoi un conteneur démarre-t-il en une fraction de seconde, alors qu'une machine virtuelle met de longues secondes ? Pourrait-on lancer un conteneur Windows sur cette VM Linux ?*
 
 
 ## 2. Lancer une image existante
 
-On lance un serveur web nginx sans rien installer sur la VM :
+On lance un serveur web nginx :
 
 ```bash
 docker run -d --name web -p 8080:80 nginx
@@ -96,30 +88,20 @@ docker run -d --name web -p 8080:80 nginx
 - `--name web` lui donne un nom (sinon Docker en génère un) ;
 - `-p 8080:80` redirige le port 8080 de la VM vers le port 80 du conteneur.
 
-Ouvrez http://localhost:8080 : la page « Welcome to nginx! » s'affiche.
+Ouvrez http://localhost:8080. La requête de votre navigateur traverse le tunnel SSH jusqu'au port 8080 de la VM, puis Docker la transmet au port 80 du conteneur.
 
-```bash
-docker ps              # le conteneur tourne
-docker logs -f web     # rechargez la page pour voir les requêtes (Ctrl+C pour quitter)
-docker stop web        # la page ne répond plus
-docker start web       # elle revient
-docker rm -f web       # arrête et supprime le conteneur
-```
+Utilisez `docker logs`, `stop`, `start` et `rm` pour observer et manipuler ce conteneur.
 
-Sans l'option `-p`, le port 80 du conteneur n'est pas accessible depuis l'extérieur.
+*Essayez de lancer un second nginx avec exactement la même commande, en changeant seulement le nom. Que se passe-t-il, et pourquoi ? Que faut-il changer pour que deux nginx tournent en même temps ? Pourquoi n'y a-t-il aucun conflit sur le port 80 des conteneurs ?*
 
-**Bonus.** Une application plus complète, toujours en une commande :
+*Que se passe-t-il si on oublie `-d` ? Et si on oublie `-p` ?*
 
-```bash
-docker run -d --name kuma -p 3001:3001 louislam/uptime-kuma:1
-```
-
-http://localhost:3001 affiche Uptime Kuma, un outil de supervision de sites. Supprimez-le ensuite avec `docker rm -f kuma`.
+Supprimez ces conteneurs avant de passer à la suite.
 
 
 ## 3. Écrire un Dockerfile
 
-Un Dockerfile décrit comment construire une image. Celui de [`03-dockerfile`](03-dockerfile/Dockerfile) tient en deux instructions :
+Le dossier [`03-dockerfile`](03-dockerfile/Dockerfile) contient un Dockerfile de deux instructions :
 
 ```dockerfile
 FROM nginx:1.27-alpine
@@ -131,29 +113,22 @@ On part de l'image nginx et on y copie notre propre page.
 ```bash
 cd 03-dockerfile
 docker build -t mon-site .
-docker images
-docker run -d --name mon-site -p 8081:80 mon-site
+docker run -d --name mon-site -p 8080:80 mon-site
 ```
 
-`docker build -t mon-site .` construit une image nommée `mon-site` à partir du dossier courant. La page est visible sur http://localhost:8081.
+`docker build -t mon-site .` construit une image nommée `mon-site` à partir du dossier courant. La page est visible sur http://localhost:8080.
 
-### Exercice
+*Ce Dockerfile ne dit nulle part comment lancer nginx. Comment le conteneur sait-il quoi exécuter ?*
 
-1. Modifiez [`site/index.html`](03-dockerfile/site/index.html), puis rechargez la page. Que se passe-t-il ?
-2. Reconstruisez l'image et recréez le conteneur :
-   ```bash
-   docker build -t mon-site .
-   docker rm -f mon-site
-   docker run -d --name mon-site -p 8081:80 mon-site
-   ```
-3. Dans la sortie du build, l'étape `FROM` est marquée `CACHED`. Une image est composée de couches, et Docker ne reconstruit que celles qui ont changé. `docker history mon-site` les affiche.
+### Modifier l'image
 
-L'image est figée au moment du build : modifier les fichiers sources ne la change pas.
+Modifiez [`site/index.html`](03-dockerfile/site/index.html) et rechargez la page (changez un mot ou autre si vous le souhaitez). Faites ensuite le nécessaire pour que votre modification apparaisse.
 
-Laissez `mon-site` tourner pour l'étape suivante.
+*Pourquoi la modification n'apparaissait-elle pas tout de suite ? Qu'avez-vous dû refaire, et pourquoi chacune de ces opérations était-elle nécessaire ?*
 
+Lors du second build, l'étape `FROM` est marquée `CACHED` : une image est un empilement de couches, et Docker ne reconstruit que celles qui ont changé. `docker history mon-site` les affiche.
 
-## 4. Entrer dans un conteneur
+### Entrer dans un conteneur
 
 `docker exec` lance une commande dans un conteneur déjà démarré. Ici, on ouvre un shell :
 
@@ -169,66 +144,28 @@ sed -i 's/Bonjour/Coucou/' index.html
 exit
 ```
 
-Rechargez http://localhost:8081 : le titre a changé. `docker diff mon-site` liste les fichiers modifiés par rapport à l'image.
+Rechargez la page : le titre a changé. `docker diff mon-site` liste les fichiers modifiés par rapport à l'image.
 
-### Que devient la modification ?
-
-Avant chaque commande, essayez de prévoir le résultat.
+Avant de taper chacune des commandes suivantes, essayez de prévoir si la modification survivra :
 
 ```bash
 docker restart mon-site
 ```
 
-Rechargez la page.
-
 ```bash
 docker rm -f mon-site
-docker run -d --name mon-site -p 8081:80 mon-site
+docker run -d --name mon-site -p 8080:80 mon-site
 ```
 
-Rechargez la page.
+*Expliquez les deux résultats. Sachant qu'en production, les conteneurs sont régulièrement supprimés et recréés (mise à jour, redéploiement, panne), que pensez-vous de la modification d'un conteneur à la main ?*
 
-<details>
-<summary>Réponse</summary>
+## 4. Docker Compose
 
-Après `restart`, c'est le même conteneur : la modification est conservée.
-Après `rm` puis `run`, c'est un nouveau conteneur créé à partir de l'image : la modification est perdue.
-
-Un conteneur, c'est l'image (en lecture seule) plus une couche modifiable, qui disparaît quand on supprime le conteneur. Comme les conteneurs sont régulièrement supprimés et recréés (mises à jour, redéploiements), on ne modifie jamais un conteneur à la main : on modifie le Dockerfile, ou on utilise un volume.
-</details>
-
-### Monter un dossier dans le conteneur
-
-On rend le dossier `site/` de la VM visible dans le conteneur (*bind mount*) :
-
-```bash
-docker rm -f mon-site
-docker run -d --name mon-site -p 8081:80 \
-  -v "$(pwd)/site:/usr/share/nginx/html:ro" \
-  mon-site
-```
-
-`-v <chemin sur la VM>:<chemin dans le conteneur>` partage le dossier ; `:ro` le rend accessible en lecture seule dans le conteneur.
-
-Modifiez `site/index.html` sur la VM (`nano site/index.html`) et rechargez : le changement est immédiat, sans rebuild. Les fichiers restent sur la VM même si le conteneur est supprimé.
-
-C'est pratique pendant le développement. En production, on reconstruit plutôt l'image.
-
-```bash
-docker rm -f mon-site
-cd ..
-```
-
-
-## 5. Docker Compose
-
-Une application réelle se compose de plusieurs services : un site, une base de données, un outil d'administration. Docker Compose permet de les décrire dans un seul fichier, [`05-compose/docker-compose.yml`](05-compose/docker-compose.yml), et de les lancer ensemble.
-
-L'application est un livre d'or :
+Une application réelle se compose de plusieurs services : un site, une base de données, un outil d'administration. Docker Compose permet de les décrire dans un seul fichier et évite de lancer des dizaines de commandes avec des options précises pour les relier. [`04-compose/docker-compose.yml`](04-compose/docker-compose.yml) en contient un exemple : un livre d'or.
 
 | Service   | Image                                          | Rôle                            |
 |-----------|------------------------------------------------|---------------------------------|
-| `app`     | construite depuis [`app/`](05-compose/app/)    | le site (Python / Flask)        |
+| `app`     | construite depuis [`app/`](04-compose/app/)    | le site (Python / Flask)        |
 | `db`      | `postgres:17-alpine`                           | la base de données              |
 | `adminer` | `adminer`                                      | interface web pour la base      |
 
@@ -238,153 +175,107 @@ port 8000 ──> app ─────┐
 port 8090 ──> adminer ─┘
 ```
 
-`app` et `db` partagent le réseau `backend`, `adminer` et `db` partagent le réseau `admin`. La base n'a aucun port publié.
+Lisez le fichier `docker-compose.yml` en entier avant de lancer quoi que ce soit, et faites le parallèle avec les options de `docker run` vues plus haut.
 
 ### Lancer
 
 ```bash
-cd 05-compose
+cd 04-compose
 docker compose up -d --build
 docker compose ps
 docker compose logs -f app
 ```
 
-- http://localhost:8000 : le livre d'or ;
-- http://localhost:8090 : Adminer. Système `PostgreSQL`, serveur `db`, identifiants dans [`.env`](05-compose/.env).
+L'application écoute sur le port 8000 de la VM, Adminer sur le port 8090. Votre tunnel SSH actuel ne couvre que le port 8080 : ouvrez une nouvelle connexion SSH avec les tunnels nécessaires, puis consultez le livre d'or et Adminer (système `PostgreSQL`, serveur `db`, identifiants dans [`.env`](04-compose/.env)).
 
 ### Réseaux
 
-Sur un même réseau Docker, les services se joignent par leur nom. C'est pour cela que l'application se connecte à `db:5432` plutôt qu'à une adresse IP.
+L'application se connecte à la base avec l'adresse `db:5432` (voir `DATABASE_URL` dans le compose), sans jamais connaître son adresse IP.
 
 ```bash
 docker compose exec app python -c "import socket; print(socket.gethostbyname('db'))"
 docker compose exec app python -c "import socket; print(socket.gethostbyname('adminer'))"
 ```
 
-La première commande renvoie une adresse IP, la seconde échoue : `app` et `adminer` ne sont pas sur le même réseau. Et comme la base n'a pas de port publié, elle n'est pas joignable depuis l'extérieur de la VM.
+*Pourquoi la première commande fonctionne-t-elle et pas la seconde ? Regardez la section `networks` du compose.*
 
-On peut aussi interroger la base directement :
-
-```bash
-docker compose exec db psql -U livredor -c "SELECT * FROM messages;"
-```
+*Le service `db` n'a aucune section `ports`. Comment Adminer et l'application y accèdent-ils quand même ? Pourquoi est-ce un choix délibéré ?*
 
 ### Persistance des données
 
-Ajoutez quelques messages, puis, en prévoyant à chaque fois le résultat :
+Ajoutez quelques messages. Avant chaque commande, essayez de prévoir ce que vous verrez en rechargeant la page :
 
 ```bash
 docker compose down
 docker compose up -d
 ```
-
-Rechargez la page.
 
 ```bash
 docker compose down -v
 docker compose up -d
 ```
 
-Rechargez la page.
-
-<details>
-<summary>Réponse</summary>
-
-`down` supprime les conteneurs et les réseaux, mais les données sont stockées dans le volume `db-data`, qui est conservé.
-
-`down -v` supprime aussi le volume. Au redémarrage, la base est vide, donc Postgres exécute [`db/init.sql`](05-compose/db/init.sql) : seuls les deux messages initiaux réapparaissent.
-
-`docker volume ls` liste les volumes.
-</details>
+*Où sont stockés les messages ? Pourquoi survivent-ils au premier `down` mais pas au second ?*
 
 ### Modifier l'application
 
-Changez le titre dans [`app/templates/index.html`](05-compose/app/templates/index.html) et rechargez : rien ne change, comme à l'étape 3. Lancez `docker compose up -d --build` : seul le service `app` est reconstruit et recréé.
+Changez le titre dans [`app/templates/index.html`](04-compose/app/templates/index.html) et faites en sorte qu'il apparaisse sur le site.
 
-### Bonnes pratiques présentes dans ce projet
+*Lors du rebuild, quels services Compose a-t-il recréés ? Pourquoi pas les autres ?*
 
-- les mots de passe sont dans `.env` et non dans le code (en temps normal, ce fichier n'est pas versionné) ;
+### Bonnes pratiques présentes dans le projet
+
+- les mots de passe sont dans `.env` et non dans le code (en temps normal, ce fichier n'est pas dans le repo) ;
 - l'application tourne avec un utilisateur non root (`USER appuser` dans le Dockerfile) ;
-- les ressources CPU et mémoire de l'application sont limitées ;
 - `depends_on` et `healthcheck` font attendre l'application jusqu'à ce que la base soit prête ;
 - `restart: unless-stopped` relance les services après un crash ou un redémarrage de la VM.
 
-```bash
-docker compose down
-cd ..
-```
+*Pour chacune de ces pratiques, quel problème concret évite-t-elle ?*
+
+Arrêtez les conteneurs du compose et revenez à la racine du TP.
 
 
-## 6. Bonus : reverse proxy avec Traefik
+## 5. Bonus : réparer un compose cassé
 
-Un serveur peut héberger des dizaines de sites. On ne demande pas aux visiteurs d'utiliser un port différent pour chacun : tout le monde arrive sur le port 80, et un **reverse proxy** transmet chaque requête au bon conteneur selon le nom de domaine demandé.
+Cette partie n'est pas guidée : aucune commande n'est donnée, et tout ce dont vous avez besoin a été vu plus haut.
 
-[Traefik](https://traefik.io) découvre les conteneurs en lisant le socket Docker et se configure à partir de leurs labels. Dans [`06-traefik/docker-compose.yml`](06-traefik/docker-compose.yml), les services `site` et `whoami` n'ont aucun port publié, seulement des labels :
+Le dossier [`05-compose-casse`](05-compose-casse/) contient un compteur de visites : une application Flask qui stocke son compteur dans Redis, une base de données clé-valeur en mémoire. Celui qui l'a écrit est parti sans la tester, et elle ne fonctionne pas.
 
-```yaml
-labels:
-  - "traefik.enable=true"
-  - "traefik.http.routers.site.rule=Host(`site.${DOMAIN}`)"
-```
+Le code Python ([`app/app.py`](05-compose-casse/app/app.py)) est correct. Les problèmes se trouvent dans le Dockerfile, le `docker-compose.yml` et la façon dont ils s'articulent. Vous ne savez pas combien il y en a.
 
-```
-                          ┌──> site    (image de l'étape 3)
-port 80 ──> traefik ──────┤
-                          └──> whoami
-```
+### Objectif
 
-En production, de vrais noms de domaine pointeraient vers le serveur. Ici, on utilise le fait que les navigateurs redirigent tous les noms en `*.localhost` vers votre propre ordinateur, donc dans le tunnel SSH (port 8880 de votre ordinateur vers le port 80 de la VM). Le fichier [`.env`](06-traefik/.env) contient déjà `DOMAIN=localhost`.
+La stack est réparée quand :
 
-```bash
-cd 06-traefik
-docker compose up -d --build
-```
+- http://localhost:8080 affiche un compteur qui augmente à chaque rechargement ;
+- le compteur conserve sa valeur après un `docker compose down` suivi d'un `docker compose up` ;
+- Redis n'est pas accessible depuis l'extérieur de la VM.
 
-- http://site.localhost:8880 : le site de l'étape 3 ;
-- http://whoami.localhost:8880 : le détail de la requête et du conteneur qui a répondu ;
-- http://localhost:8880 : erreur 404, aucun service ne correspond à ce nom ;
-- http://localhost:8088 : le tableau de bord de Traefik, avec les routes détectées (onglet *HTTP*).
+Pensez à arrêter ce qui occupe déjà le port 8080.
 
-Si `site.localhost` ne fonctionne pas dans votre navigateur (c'est le cas de certaines versions de Safari), utilisez Firefox ou Chrome, ou testez depuis la VM avec `curl -H "Host: whoami.localhost" http://localhost`.
+### Méthode
 
-### Répartition de charge
+Corrigez une erreur à la fois, et pour chacune, notez le symptôme observé, la façon dont vous l'avez localisée et la cause. Ne modifiez rien au hasard : chaque correction doit s'expliquer.
 
-```bash
-docker compose up -d --scale whoami=3
-```
-
-Rechargez http://whoami.localhost:8880 plusieurs fois : la ligne `Hostname` change. Traefik a détecté les nouveaux conteneurs et répartit les requêtes entre eux. Avec `ports:`, ce serait impossible, car trois conteneurs ne peuvent pas publier le même port de la VM.
-
-### Exercice
-
-Ajoutez un service accessible sur http://hello.localhost:8880, basé sur l'image `nginx`.
+Les logs, `docker compose ps`, `docker compose exec` et les avertissements affichés par `docker compose` lui-même sont vos meilleurs outils. Quand quelque chose ne répond pas, demandez-vous à quel endroit de la chaîne la requête s'arrête : navigateur, tunnel, VM, conteneur, processus.
 
 <details>
-<summary>Solution</summary>
+<summary>Indice si vous êtes bloqué sur la page qui ne répond pas</summary>
 
-```yaml
-  hello:
-    image: nginx
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.hello.rule=Host(`hello.${DOMAIN}`)"
-      - "traefik.http.routers.hello.entrypoints=web"
-```
-
-Puis `docker compose up -d`. Traefik prend en compte le nouveau conteneur sans redémarrer.
+Depuis l'intérieur du conteneur `app`, l'application répond-elle ? Essayez :
+`docker compose exec app python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:5000').read())"`
+Si elle répond de l'intérieur mais pas de l'extérieur, relisez attentivement les premières lignes des logs.
 </details>
 
-### Sécurité
+<details>
+<summary>Indice si tout fonctionne sauf la persistance</summary>
 
-Donner accès à `/var/run/docker.sock` à un conteneur revient à lui donner le contrôle de Docker, et donc pratiquement les droits root sur la machine. On le monte en lecture seule et on le réserve à des images de confiance. De même, le tableau de bord est ici exposé sans authentification (`--api.insecure=true`), ce qu'on ne fait pas en production. En production, Traefik gère aussi le HTTPS, avec des certificats Let's Encrypt.
-
-```bash
-docker compose down
-cd ..
-```
+Où Redis écrit-il réellement ses données ? Cherchez la documentation de l'image `redis` sur le Docker Hub, et comparez avec `docker volume ls`.
+</details>
 
 
-## 7. Nettoyage
+
+## 6. Nettoyage
 
 ```bash
 docker rm -f $(docker ps -aq)       # supprime tous les conteneurs
@@ -408,8 +299,9 @@ docker system df                    # affiche l'espace disque utilisé par Docke
 | `docker compose up [-d] [--build]`                                | lance les services (en arrière plan) (en reconstruisant) |
 | `docker compose down [-v]`                                        | supprime les services (et les volumes)                   |
 | `docker compose logs -f [service]`                                | affiche les logs                                         |
+| `docker compose exec SERVICE CMD`                                 | exécute une commande dans un service                     |
 
-`H:C` : Hôte (votre VM) puis Conteneur.
+`H:C` : Hôte (votre VM) puis Conteneur. Pour `-v`, le chemin côté hôte doit être absolu (`"$(pwd)/dossier"`).
 
 
 ## Erreurs fréquentes
@@ -418,6 +310,6 @@ docker system df                    # affiche l'espace disque utilisé par Docke
 | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `port is already allocated`                  | un autre conteneur utilise ce port : `docker ps`, puis supprimez-le ou changez le port de gauche dans `-p`                                         |
 | `The container name "xxx" is already in use` | un conteneur portant ce nom existe déjà, même arrêté : `docker rm -f xxx`                                                                          |
-| La page ne s'affiche pas                     | vérifiez que le conteneur tourne (`docker ps`), ses logs (`docker logs N`), le port, et que la connexion SSH avec les tunnels est toujours ouverte |
+| La page ne s'affiche pas                     | vérifiez que le conteneur tourne (`docker ps`), ses logs (`docker logs NAME`), le port, et que le tunnel SSH vers ce port est ouvert               |
 | Une modification n'apparaît pas              | l'image a-t-elle été reconstruite (`--build`) ?                                                                                                    |
-| `permission denied ... docker.sock`          | voir l'étape 0                                                                                                                                     |
+| `permission denied ... docker.sock`          | votre utilisateur n'est pas dans le groupe `docker`, ou vous ne vous êtes pas reconnecté depuis (voir l'étape 0)                                    |
