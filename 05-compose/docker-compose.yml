@@ -1,0 +1,63 @@
+# Livre d'or : une app web (Flask) + une base de données (Postgres) + une interface admin (Adminer)
+# Les variables ${...} viennent du fichier .env à côté.
+
+services:
+
+  # --- Notre application, construite à partir de ./app/Dockerfile ---
+  app:
+    build: ./app
+    ports:
+      - "${APP_PORT:-8000}:8000"          # <port VM>:<port conteneur>
+    environment:
+      # "db" = le nom du service ci-dessous : Docker fait la résolution DNS tout seul
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      db:
+        condition: service_healthy       # attend que Postgres soit vraiment prêt
+    networks:
+      - backend
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:                          # bonne pratique : limiter CPU / RAM
+          cpus: "0.5"
+          memory: 256M
+
+  # --- La base de données : image officielle, rien à construire ---
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data                         # volume nommé : les données survivent au conteneur
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro    # exécuté au 1er démarrage seulement (base vide)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks:
+      - backend
+      - admin
+    restart: unless-stopped
+    # Pas de "ports:" -> la base n'est PAS accessible depuis l'extérieur, seulement par les autres conteneurs
+
+  # --- Interface web pour explorer la base ---
+  adminer:
+    image: adminer:latest
+    ports:
+      - "${ADMINER_PORT:-8090}:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    networks:
+      - admin                            # voit "db", mais PAS "app"
+    restart: unless-stopped
+
+volumes:
+  db-data:
+
+networks:
+  backend:   # app <-> db
+  admin:     # adminer <-> db
